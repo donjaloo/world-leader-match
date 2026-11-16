@@ -120,7 +120,7 @@ def get_leader_image(name):
             search_results = res.get("query", {}).get("search", [])
             if not search_results:
                 continue
-            title = search_results["title"]
+            title = search_results[0]["title"]
 
             img_params = {
                 "action": "query",
@@ -143,7 +143,7 @@ def get_embedding(text):
         model="text-embedding-3-small",
         input=text
     )
-    return np.array(response.data.embedding)
+    return np.array(response.data[0].embedding)
 
 def analyze_with_gpt(user_summary, top3_df):
     leaders_info = ""
@@ -173,7 +173,7 @@ def analyze_with_gpt(user_summary, top3_df):
         ],
         temperature=0.7
     )
-    return response.choices.message.content
+    return response.choices[0].message.content
 
 # --- 웹 화면 UI 구성 ---
 st.title("🌍 나와 가장 닮은 세계의 역사적 지도자 찾기")
