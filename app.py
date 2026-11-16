@@ -1,4 +1,5 @@
 import os
+import requests
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -7,10 +8,10 @@ from openai import OpenAI
 # 페이지 기본 설정
 st.set_page_config(page_title="나와 닮은 세계 지도자 찾기", page_icon="🌍", layout="centered")
 
-# API 키 불러오기 (배포 서버의 Secrets 또는 로컬 환경변수 사용)
+# API 키 불러오기 (Streamlit Secrets 또는 로컬 환경변수)
 api_key = st.secrets.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
 if not api_key:
-    st.error("OpenAI API 키가 설정되지 않았습니다.")
+    st.error("OpenAI API 키가 설정되지 않았습니다. Secrets 설정을 확인해 주세요.")
     st.stop()
 
 client = OpenAI(api_key=api_key)
@@ -31,6 +32,48 @@ def load_data():
     df = pd.read_csv(CSV_PATH)
     embeddings = np.load(EMB_PATH)
     return df, embeddings
+
+@st.cache_data(show_spinner=False)
+def get_leader_image(name):
+    """위키백과 공식 API를 이용해 인물 대표 이미지 URL을 무료(토큰 0원)로 가져옵니다."""
+    headers = {"User-Agent": "WorldLeaderMatchApp/1.0 (contact@example.com)"}
+    
+    # 한국어 위키백과 -> 실패 시 영어 위키백과 순서로 검색
+    for lang in ["ko", "en"]:
+        try:
+            search_url = f"https://{lang}.wikipedia.org/w/api.php"
+            search_params = {
+                "action": "query",
+                "list": "search",
+                "srsearch": name,
+                "format": "json",
+                "srlimit": 1
+            }
+            res = requests.get(search_url, params=search_params, headers=headers, timeout=4).json()
+            search_results = res.get("query", {}).get("search", [])
+            if not search_results:
+                continue
+            
+            title = search_results[0]["title"]
+            
+            # 해당 문서의 대표 썸네일 이미지 URL 가져오기
+            img_params = {
+                "action": "query",
+                "titles": title,
+                "prop": "pageimages",
+                "format": "json",
+                "pithumbsize": 400
+            }
+            img_res = requests.get(search_url, params=img_params, headers=headers, timeout=4).json()
+            pages = img_res.get("query", {}).get("pages", {})
+            for page_id in pages:
+                if "thumbnail" in pages[page_id]:
+                    return pages[page_id]["thumbnail"]["source"]
+        except Exception:
+            continue
+            
+    # 위키백과에 사진이 없는 경우 기본 프로필 실루엣 반환
+    return "https://flaticon.com"
 
 def get_embedding(text):
     response = client.embeddings.create(
@@ -110,6 +153,11 @@ if submitted:
                 with cols[idx]:
                     match_score = round(row["similarity"] * 100, 1)
                     st.metric(label=medals[idx], value=row["name"], delta=f"유사도 {match_score}")
+                    
+                    # 인물 대표 사진 출력 (토큰 비용 0원)
+                    img_url = get_leader_image(row["name"])
+                    st.image(img_url, use_container_width=True)
+                    
                     st.caption(row["era_region"])
 
             st.divider()
