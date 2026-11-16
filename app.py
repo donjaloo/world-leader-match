@@ -3,6 +3,7 @@ import itertools
 import requests
 import numpy as np
 import pandas as pd
+import urllib.parse
 import streamlit as st
 from openai import OpenAI
 
@@ -163,9 +164,12 @@ def load_mode_data(mode):
     return df, norms, means, stds
 
 @st.cache_data(show_spinner=False)
-def get_person_image(name):
-    """위키백과 공식 API를 이용해 인물 대표 이미지 URL을 무료(토큰 0원)로 가져옵니다."""
+def get_person_info(name):
+    """위키백과 API에서 인물 대표 이미지 URL과 백과사전 페이지 URL을 무료(토큰 0원)로 가져옵니다."""
     headers = {"User-Agent": "HistoryPersonaMatchApp/1.0 (contact@example.com)"}
+    default_img = "https://flaticon.com"
+    default_url = f"https://wikipedia.org{urllib.parse.quote(name)}"
+    
     for lang in ["ko", "en"]:
         try:
             search_url = f"https://{lang}.wikipedia.org/w/api.php"
@@ -181,6 +185,7 @@ def get_person_image(name):
             if not search_results:
                 continue
             title = search_results[0]["title"]
+            page_url = f"https://{lang}.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
 
             img_params = {
                 "action": "query",
@@ -193,10 +198,14 @@ def get_person_image(name):
             pages = img_res.get("query", {}).get("pages", {})
             for page_id in pages:
                 if "thumbnail" in pages[page_id]:
-                    return pages[page_id]["thumbnail"]["source"]
+                    return pages[page_id]["thumbnail"]["source"], page_url
+            
+            # 사진은 없지만 문서는 찾은 경우 해당 문서 URL 반환
+            return default_img, page_url
         except Exception:
             continue
-    return "https://flaticon.com"
+            
+    return default_img, default_url
 
 def get_embedding(text):
     response = client.embeddings.create(
@@ -327,9 +336,11 @@ if st.button(btn_label, type="primary", use_container_width=True):
                     match_pct = min(98.5, max(75.0, round(85.0 + row["z_score"] * 4.5, 1)))
                     st.metric(label=medals[idx], value=row["name"], delta=f"공명도 {match_pct}%")
                     
-                    img_url = get_person_image(row["name"])
+                    img_url, wiki_url = get_person_info(row["name"])
                     st.image(img_url, use_container_width=True)
                     
+                    # 클릭 시 새 탭에서 위키백과 인물 설명 열기
+                    st.markdown(f"📖 **[{row['name']} 알아보기 ↗]({wiki_url})**")
                     st.caption(row["era_region"])
 
             st.divider()
