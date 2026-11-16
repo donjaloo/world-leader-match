@@ -7,7 +7,7 @@ import streamlit as st
 from openai import OpenAI
 
 # 페이지 기본 설정
-st.set_page_config(page_title="나와 닮은 세계 지도자 찾기", page_icon="🌍", layout="centered")
+st.set_page_config(page_title="나와 닮은 역사 속 인물 찾기", page_icon="🎭", layout="centered")
 
 # API 키 불러오기 (Streamlit Secrets 또는 로컬 환경변수)
 api_key = st.secrets.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
@@ -17,11 +17,8 @@ if not api_key:
 
 client = OpenAI(api_key=api_key)
 
-CSV_PATH = "leaders_100.csv"
-EMB_PATH = "leader_embeddings.npy"
-
-# 검증 완료된 균형 잡힌 5지선다 + 6번 직접 기입 질문 세트
-QUIZ_DATA = [
+# 모드별 질문 및 선택지 데이터
+HERO_QUIZ = [
     {
         "question": "1. [위기 대처] 예상치 못한 큰 위기나 실패가 닥쳤을 때, 가장 먼저 어떻게 반응하시나요?",
         "options": [
@@ -79,15 +76,78 @@ QUIZ_DATA = [
     }
 ]
 
-@st.cache_data
-def load_data_and_baseline():
-    """100명 데이터와 Z-score 보정용 기준 분포(평균·표준편차)를 한 번만 계산해 캐싱합니다."""
-    df = pd.read_csv(CSV_PATH)
-    embeddings = np.load(EMB_PATH)
-    leader_norms = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
+VILLAIN_QUIZ = [
+    {
+        "question": "1. [통제와 권력] 당신이 거대한 조직이나 집단의 절대적인 권한을 쥐게 된다면, 어떻게 다스릴까요?",
+        "options": [
+            "① 철저한 규칙과 감시 시스템을 구축해, 모든 구성원이 정해진 궤도에서 벗어나지 못하게 통제한다.",
+            "② 화려한 연설과 카리스마로 대중의 감정과 자부심을 자극해, 스스로 나를 숭배하고 따르게 만든다.",
+            "③ 측근들이 서로 경쟁하고 견제하도록 판을 짜서, 오직 나에게만 충성하도록 권력 균형을 조종한다.",
+            "④ 직접 악역을 맡기보다 대리인을 내세워 궂은일을 처리하게 하고, 나는 온화하고 정의로운 얼굴을 유지한다.",
+            "⑤ 기존의 낡은 제도와 기득권을 단숨에 뒤엎고, 내 머릿속의 완벽한 이상 사회를 강압적으로 실현한다.",
+            "⑥ 기타 (직접 기입)"
+        ]
+    },
+    {
+        "question": "2. [배신과 위협] 믿었던 측근이나 동료가 당신의 권위에 도전하거나 배신하려 할 때, 어떻게 대처하나요?",
+        "options": [
+            "① 감정을 드러내지 않고 차갑게 때를 기다렸다가, 가장 치명적인 순간에 흔적도 없이 숙청한다.",
+            "② 본보기가 되도록 공개적이고 가혹한 처벌을 내려, 다른 누구도 감히 반항할 엄두를 못 내게 만든다.",
+            "③ 상대의 약점과 비밀을 미리 수집해 두었다가, 조용히 고립시키고 스스로 무너지도록 압박한다.",
+            "④ 즉각적인 분노와 무력으로 제압해, 나를 거스르는 대가가 얼마나 참혹한지 똑똑히 각인시킨다.",
+            "⑤ 거짓 미소와 유화책으로 상대를 방심하게 만든 뒤, 결정적인 순간에 뒤통수를 쳐서 판을 뒤집는다.",
+            "⑥ 기타 (직접 기입)"
+        ]
+    },
+    {
+        "question": "3. [목적과 수단] 원하는 목표를 달성하기 위해 도덕적 선을 넘어야 할 때, 어떤 태도를 취하나요?",
+        "options": [
+            "① 큰 대의와 효율을 위해서라면 소수의 희생이나 비정한 수단도 당연히 감수해야 할 비용이다.",
+            "② 내가 믿는 절대적 원칙과 순수성을 지키는 일이라면, 어떤 타협이나 관용도 허용하지 않는다.",
+            "③ 법과 절차는 약자를 통제하기 위한 도구일 뿐, 나는 그 규칙 위에 군림하며 실속과 이익을 챙긴다.",
+            "④ 대중에게는 화려한 명분과 구원을 약속하면서, 뒤에서는 내 사적인 욕망과 부를 철저히 채운다.",
+            "⑤ 상부의 지시나 조직의 시스템이라는 명분 뒤에 숨어, 죄책감 없이 차갑고 성실하게 임무를 집행한다.",
+            "⑥ 기타 (직접 기입)"
+        ]
+    },
+    {
+        "question": "4. [내면의 욕망] 당신의 내면 깊숙한 곳에 숨겨진 가장 강렬한 어두운 욕망은 무엇인가요?",
+        "options": [
+            "① 누구도 나를 무시하거나 위협하지 못하도록, 모든 변수와 사람을 내 손아귀에 완벽히 장악하는 것.",
+            "② 역사에 내 이름을 영원히 각인시키고, 거대한 기념비와 화려한 영광으로 만인의 우러러봄을 받는 것.",
+            "③ 나를 얕보거나 상처 입혔던 세상의 모든 위선과 기존 질서를 철저히 파괴하고 복수하는 것.",
+            "④ 세속의 도덕이나 타인의 시선에 얽매이지 않고, 오직 내 취향과 쾌락, 변덕대로 세상을 휘두르는 것.",
+            "⑤ 아무도 믿지 못하는 고독한 성벽 안에서, 외부의 모든 위협을 차단한 채 나만의 왕국을 지키는 것.",
+            "⑥ 기타 (직접 기입)"
+        ]
+    },
+    {
+        "question": "5. [위기와 몰락] 사방이 적으로 둘러싸이고 패배가 눈앞에 닥쳤을 때, 마지막으로 어떤 선택을 할까요?",
+        "options": [
+            "① 현실적인 후퇴나 항복은 없다. 마지막 한 사람까지 동원해 파멸적인 정면 돌파를 밀어붙인다.",
+            "② 현실의 참혹한 패배를 외면한 채, 끝까지 내가 승리하고 있다는 환상과 선동 속에서 자존심을 지킨다.",
+            "③ 냉정하게 손익을 계산해 재빨리 태세를 전환하고, 살아남기 위해 어제의 적과도 결탁한다.",
+            "④ 내가 가질 수 없다면 차라리 모든 것을 불태워버리겠다는 극단적인 파괴와 보복을 선택한다.",
+            "⑤ 비밀 통로와 숨겨둔 자금을 이용해 조용히 자취를 감춘 뒤, 배후에서 다시 재기의 칼을 간다.",
+            "⑥ 기타 (직접 기입)"
+        ]
+    }
+]
 
-    # 25개 객관식 보기로 기준 분포 계산 (쏠림 현상 방지용)
-    base_options = [opt[2:].strip() for item in QUIZ_DATA for opt in item["options"][:5]]
+@st.cache_data
+def load_mode_data(mode):
+    """선택된 모드(영웅 또는 빌런)에 맞는 CSV, 벡터, 기준 분포를 불러옵니다."""
+    if mode == "hero":
+        csv_path, emb_path, quiz = "leaders_100.csv", "leader_embeddings.npy", HERO_QUIZ
+    else:
+        csv_path, emb_path, quiz = "villains_100.csv", "villain_embeddings.npy", VILLAIN_QUIZ
+
+    df = pd.read_csv(csv_path)
+    embeddings = np.load(emb_path)
+    norms = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
+
+    # 25개 객관식 보기로 기준 분포(Z-score용) 계산
+    base_options = [opt[2:].strip() for item in quiz for opt in item["options"][:5]]
     res = client.embeddings.create(model="text-embedding-3-small", input=base_options)
     opt_vecs = np.array([d.embedding for d in res.data]).reshape(5, 5, -1)
 
@@ -95,17 +155,17 @@ def load_data_and_baseline():
     for combo in itertools.product(range(5), repeat=5):
         u_vec = np.mean([opt_vecs[q][o] for q, o in enumerate(combo)], axis=0)
         u_norm = u_vec / np.linalg.norm(u_vec)
-        all_raw.append(np.dot(leader_norms, u_norm))
+        all_raw.append(np.dot(norms, u_norm))
     all_raw = np.array(all_raw)
 
     means = np.mean(all_raw, axis=0)
     stds = np.std(all_raw, axis=0) + 1e-8
-    return df, leader_norms, means, stds
+    return df, norms, means, stds
 
 @st.cache_data(show_spinner=False)
-def get_leader_image(name):
+def get_person_image(name):
     """위키백과 공식 API를 이용해 인물 대표 이미지 URL을 무료(토큰 0원)로 가져옵니다."""
-    headers = {"User-Agent": "WorldLeaderMatchApp/1.0 (contact@example.com)"}
+    headers = {"User-Agent": "HistoryPersonaMatchApp/1.0 (contact@example.com)"}
     for lang in ["ko", "en"]:
         try:
             search_url = f"https://{lang}.wikipedia.org/w/api.php"
@@ -145,13 +205,27 @@ def get_embedding(text):
     )
     return np.array(response.data[0].embedding)
 
-def analyze_with_gpt(user_summary, top3_df):
+def analyze_with_gpt(mode, user_summary, top3_df):
     leaders_info = ""
     for rank, (_, row) in enumerate(top3_df.iterrows(), 1):
         leaders_info += f"[{rank}위] {row['name']} ({row['era_region']})\n- 특징: {row['personality']}\n\n"
 
+    if mode == "hero":
+        role_desc = "당신은 통찰력 있고 따뜻한 어조로 리더십과 성향을 분석하는 심리·역사 전문가입니다."
+        guide_text = """
+1. 전체적인 리더십 및 성향 총평 (2~3문장)
+2. 1위 인물과의 공통점 및 닮은 이유 (사용자의 선택·답변을 구체적으로 인용하며 강점 중심으로 설명)
+3. 2위, 3위 인물이 함께 나온 이유와 앞으로 발휘하면 좋을 시너지
+"""
+    else:
+        role_desc = "당신은 인간 내면의 권력욕과 그림자 심리를 예리하고 흥미롭게 해부하는 다크 심리 분석가입니다."
+        guide_text = """
+1. 내면에 숨겨진 흑화(다크) 성향 총평 (2~3문장, 흥미롭고 몰입감 있는 톤으로 작성)
+2. 1위 빌런·권력자와 닮은 지점 (사용자의 선택·답변을 구체적으로 짚어주며 어떤 권력·통제 스타일을 지녔는지 분석)
+3. 2위, 3위 인물이 함께 나온 이유 및 현실에서 경계해야 할 '흑화 주의보' 조언
+"""
+
     prompt = f"""
-당신은 심리 및 리더십 분석 전문가입니다.
 사용자의 답변을 바탕으로, 100명의 역사적 인물 중 가장 닮은 1위, 2위, 3위가 선정되었습니다.
 
 [사용자의 선택 및 답변 요약]
@@ -160,45 +234,59 @@ def analyze_with_gpt(user_summary, top3_df):
 [선정된 1~3위 인물]
 {leaders_info}
 
-위 내용을 바탕으로 사용자에게 다음 형식에 맞춰 흥미롭고 깊이 있는 분석 결과를 작성해 주세요.
-1. 전체적인 성향 총평 (2~3문장)
-2. 1위 인물과의 공통점 및 닮은 이유 (사용자가 선택한 문구 또는 직접 작성한 내용을 구체적으로 언급하며 설명)
-3. 2위, 3위 인물이 함께 나온 이유와 보완점
+위 내용을 바탕으로 사용자에게 다음 형식에 맞춰 깊이 있고 흥미로운 분석 결과를 작성해 주세요.
+{guide_text}
 """
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "당신은 통찰력 있고 따뜻한 어조로 성향을 분석하는 심리·역사 전문가입니다."},
+            {"role": "system", "content": role_desc},
             {"role": "user", "content": prompt}
         ],
-        temperature=0.7
+        temperature=0.75
     )
     return response.choices[0].message.content
 
 # --- 웹 화면 UI 구성 ---
-st.title("🌍 나와 가장 닮은 세계의 역사적 지도자 찾기")
-st.write("19세기~20세기 세계 각국의 지도자·사상가·혁신가 100명의 데이터베이스와 당신의 행동 양식을 비교해 드립니다.")
+st.title("🎭 나와 닮은 역사 속 인물 찾기")
+st.write("200명의 방대한 역사적 인물 데이터베이스를 통해 당신의 빛과 그림자를 분석합니다.")
+
+# 모드 선택 스위치
+selected_mode_label = st.radio(
+    "테스트 모드를 선택하세요:",
+    ["🌟 영웅·지도자 모드 (100인)", "🖤 다크·빌런 모드 (100인)"],
+    horizontal=True
+)
+current_mode = "hero" if "영웅" in selected_mode_label else "villain"
+
+if current_mode == "hero":
+    st.info("🌟 **영웅·지도자 모드**: 위기 돌파, 신념, 포용, 혁신을 이끈 100명의 위인들과 당신의 행동 양식을 비교합니다.")
+    active_quiz = HERO_QUIZ
+else:
+    st.warning("🖤 **다크·빌런 모드**: 역사를 뒤흔든 100명의 폭군·독재자·책략가들과 당신 내면의 권력 및 통제 심리를 비교합니다.")
+    active_quiz = VILLAIN_QUIZ
+
 st.caption("가장 가까운 보기를 선택하거나, '⑥ 기타 (직접 기입)'을 눌러 나만의 생각을 자유롭게 적어주세요.")
 st.divider()
 
-df, leader_norms, means, stds = load_data_and_baseline()
+df, norms, means, stds = load_mode_data(current_mode)
 
 collected_answers = []
 missing_custom_input = False
 
-for idx, item in enumerate(QUIZ_DATA):
+for idx, item in enumerate(active_quiz):
     st.subheader(item["question"])
     selected = st.radio(
-        label=f"질문 {idx+1} 선택",
+        label=f"{current_mode}_질문_{idx+1}",
         options=item["options"],
-        key=f"radio_{idx}",
+        key=f"{current_mode}_radio_{idx}",
         label_visibility="collapsed"
     )
     
     if selected.startswith("⑥"):
         custom_text = st.text_area(
             label="직접 기입",
-            key=f"custom_{idx}",
+            key=f"{current_mode}_custom_{idx}",
             height=80,
             placeholder="위 보기에 없는 나만의 생각이나 행동 방식을 자유롭게 적어주세요...",
             label_visibility="collapsed"
@@ -212,34 +300,34 @@ for idx, item in enumerate(QUIZ_DATA):
     collected_answers.append((item["question"], final_ans))
     st.markdown("---")
 
-if st.button("🔍 나와 닮은 지도자 분석하기", type="primary", use_container_width=True):
+btn_label = "🔍 나와 닮은 영웅·지도자 분석하기" if current_mode == "hero" else "🖤 내 안의 다크·빌런 성향 분석하기"
+
+if st.button(btn_label, type="primary", use_container_width=True):
     if missing_custom_input:
         st.warning("'⑥ 기타 (직접 기입)'을 선택하신 항목의 내용을 입력해 주세요!")
     else:
-        with st.spinner("100명의 지도자와 당신의 행동 양식을 정밀 분석 중입니다..."):
-            # 순수 답변 내용만 결합하여 임베딩 (질문 제목 편향 제거)
+        with st.spinner("100명의 데이터베이스와 당신의 심리를 정밀 대조 중입니다..."):
             pure_answers_text = "\n".join([ans for _, ans in collected_answers])
             user_vec = get_embedding(pure_answers_text)
             user_norm = user_vec / np.linalg.norm(user_vec)
 
-            # Z-score 정규화 점수로 100명 중 진정한 매칭 순위 계산
-            raw_scores = np.dot(leader_norms, user_norm)
+            raw_scores = np.dot(norms, user_norm)
             z_scores = (raw_scores - means) / stds
             df["z_score"] = z_scores
             top3 = df.sort_values(by="z_score", ascending=False).head(3)
 
             st.success("분석이 완료되었습니다!")
-            st.subheader("🏆 당신과 가장 닮은 지도자 TOP 3")
+            result_title = "🏆 당신과 가장 닮은 지도자 TOP 3" if current_mode == "hero" else "🖤 당신 내면과 닮은 다크 리더 TOP 3"
+            st.subheader(result_title)
 
             cols = st.columns(3)
             medals = ["🥇 1위", "🥈 2위", "🥉 3위"]
             for idx, (_, row) in enumerate(top3.iterrows()):
                 with cols[idx]:
-                    # Z-score를 직관적인 매칭 지수(75~98% 범위)로 변환
                     match_pct = min(98.5, max(75.0, round(85.0 + row["z_score"] * 4.5, 1)))
                     st.metric(label=medals[idx], value=row["name"], delta=f"공명도 {match_pct}%")
                     
-                    img_url = get_leader_image(row["name"])
+                    img_url = get_person_image(row["name"])
                     st.image(img_url, use_container_width=True)
                     
                     st.caption(row["era_region"])
@@ -247,5 +335,6 @@ if st.button("🔍 나와 닮은 지도자 분석하기", type="primary", use_co
             st.divider()
             st.subheader("📋 심층 성향 분석 리포트")
             gpt_summary = "\n\n".join([f"{q}\n답변: {ans}" for q, ans in collected_answers])
-            report = analyze_with_gpt(gpt_summary, top3)
+            report = analyze_with_gpt(current_mode, gpt_summary, top3)
             st.markdown(report)
+
