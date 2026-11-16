@@ -104,7 +104,7 @@ def get_leader_image(name):
             if not search_results:
                 continue
             
-            title = search_results["title"]
+            title = search_results[0]["title"]  # [0] 추가!
             
             img_params = {
                 "action": "query",
@@ -128,7 +128,7 @@ def get_embedding(text):
         model="text-embedding-3-small",
         input=text
     )
-    return np.array(response.data.embedding)
+    return np.array(response.data[0].embedding)  # [0] 추가!
 
 def cosine_similarity(a, b):
     dot_product = np.dot(b, a)
@@ -164,7 +164,7 @@ def analyze_with_gpt(user_summary, top3_df):
         ],
         temperature=0.7
     )
-    return response.choices.message.content
+    return response.choices[0].message.content  # [0] 추가!
 
 # --- 웹 화면 UI 구성 ---
 st.title("🌍 나와 가장 닮은 세계의 역사적 지도자 찾기")
